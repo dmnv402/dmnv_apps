@@ -12,6 +12,7 @@ import {
   PlusCircle,
   Save,
   ShieldAlert,
+  ShoppingBag,
   Trees,
   Trophy,
 } from 'lucide-react'
@@ -26,6 +27,9 @@ import {
 import {
   DEFAULT_TEAMS,
   FLAME_TOKEN_EXCHANGE_RATE,
+  ITEM_COSTS,
+  ITEM_DESCRIPTIONS,
+  ITEM_LABELS,
   MAX_ROUNDS,
   TEAM_COLOR_OPTIONS,
   createGameState,
@@ -38,6 +42,7 @@ import {
   type BoardSpace,
   type EditableSpaceKind,
   type GameState,
+  type ItemKey,
   type Player,
   type TeamSetup,
 } from './game'
@@ -57,6 +62,8 @@ function App() {
   const [selectedSpaceId, setSelectedSpaceId] = useState<string>('camp')
   const [connectionSourceId, setConnectionSourceId] = useState<string | null>(null)
   const [saveNotice, setSaveNotice] = useState('')
+  const [gmTargetTeamId, setGmTargetTeamId] = useState<string>('')
+  const [gmEmberAmount, setGmEmberAmount] = useState<number>(3)
   const editorBoardRef = useRef<HTMLDivElement | null>(null)
   const dragStateRef = useRef<{
     spaceId: string
@@ -118,6 +125,8 @@ function App() {
     draft.log = trimLog(draft.log, message)
   }
 
+  const getItemCount = (player: Player, item: ItemKey) => player.inventory[item]
+
   const addEmbers = (draft: GameState, player: Player, delta: number) => {
     const previousEmbers = player.embers
     player.embers = Math.max(0, player.embers + delta)
@@ -165,6 +174,11 @@ function App() {
       case 'start': {
         writeLog(draft, `${player.name} is back at camp.`)
         draft.phase = 'awaitingAction'
+        return
+      }
+      case 'shop': {
+        writeLog(draft, `${player.name} lands on Shop and can buy items with embers.`)
+        draft.phase = 'shop'
         return
       }
       default: {
@@ -231,6 +245,7 @@ function App() {
     const nextBoard = structuredClone(selectedBoardMap)
     const nextGame = createGameState(sanitizedTeams, nextBoard)
     setGame(nextGame)
+    setGmTargetTeamId(nextGame.players[0]?.id ?? '')
     setMode('game')
   }
 
@@ -291,9 +306,122 @@ function App() {
       draft.roll = null
       draft.pendingMove = null
       draft.branchChoice = null
+      draft.targetingAction = null
 
       const nextPlayer = getCurrentPlayer(draft)
       writeLog(draft, `Round ${draft.round}: ${nextPlayer.name} is up.`)
+    })
+  }
+
+  const buyItem = (item: ItemKey) => {
+    commitGame((draft) => {
+      const player = getCurrentPlayer(draft)
+      const price = ITEM_COSTS[item]
+
+      if (player.embers < price) {
+        return
+      }
+
+      player.embers -= price
+      player.inventory[item] += 1
+      writeLog(draft, `${player.name} buys ${ITEM_LABELS[item]} for ${price} embers.`)
+    })
+  }
+
+  const useLog = () => {
+    commitGame((draft) => {
+      const player = getCurrentPlayer(draft)
+
+      if (player.inventory.logs < 1) {
+        return
+      }
+
+      player.inventory.logs -= 1
+      writeLog(draft, `${player.name} uses a Log for an extra roll.`)
+      performRoll(draft, true)
+    })
+  }
+
+  const useDoubleLogs = () => {
+    commitGame((draft) => {
+      const player = getCurrentPlayer(draft)
+
+      if (!draft.roll || draft.roll.wasDoubled || player.inventory.doubleLogs < 1) {
+        return
+      }
+
+      player.inventory.doubleLogs -= 1
+      draft.roll.total *= 2
+      draft.roll.wasDoubled = true
+      writeLog(draft, `${player.name} uses Double Logs and boosts move to ${draft.roll.total}.`)
+    })
+  }
+
+  const beginTargeting = (action: 'waterSpray' | 'wildfire') => {
+    commitGame((draft) => {
+      const player = getCurrentPlayer(draft)
+
+      if (player.inventory[action] < 1) {
+        return
+      }
+
+      draft.targetingAction = action
+      draft.phase = 'choosingTarget'
+    })
+  }
+
+  const applyTargetAction = (targetId: string) => {
+    commitGame((draft) => {
+      const player = getCurrentPlayer(draft)
+      const target = draft.players.find((entry) => entry.id === targetId)
+
+      if (!target || !draft.targetingAction || target.id === player.id) {
+        return
+      }
+
+      if (draft.targetingAction === 'waterSpray') {
+        if (player.inventory.waterSpray < 1) {
+          return
+        }
+
+        player.inventory.waterSpray -= 1
+        target.pendingRollModifier -= 1
+        writeLog(draft, `${player.name} uses Water Spray on ${target.name}. Next roll is reduced by 1.`)
+      }
+
+      if (draft.targetingAction === 'wildfire') {
+        if (player.inventory.wildfire < 1) {
+          return
+        }
+
+        player.inventory.wildfire -= 1
+        const currentPosition = player.position
+        player.position = target.position
+        target.position = currentPosition
+        writeLog(draft, `${player.name} triggers Wildfire and swaps positions with ${target.name}.`)
+      }
+
+      draft.targetingAction = null
+      draft.phase = 'awaitingAction'
+    })
+  }
+
+  const applyManualEmbers = () => {
+    const amount = Math.max(1, Math.floor(gmEmberAmount || 0))
+
+    if (!gmTargetTeamId || !game || amount < 1) {
+      return
+    }
+
+    commitGame((draft) => {
+      const target = draft.players.find((player) => player.id === gmTargetTeamId)
+
+      if (!target) {
+        return
+      }
+
+      addEmbers(draft, target, amount)
+      writeLog(draft, `Game Master grants ${amount} embers to ${target.name}.`)
     })
   }
 
@@ -308,6 +436,10 @@ function App() {
 
     if (space.kind === 'water') {
       return <ShieldAlert size={16} />
+    }
+
+    if (space.kind === 'shop') {
+      return <ShoppingBag size={16} />
     }
 
     if (space.next.length > 1) {
@@ -643,14 +775,14 @@ function App() {
             <span className="eyebrow">Board builder</span>
             <h1>Build the event map first</h1>
             <p>
-              Add regular, kindling, and water bucket tiles. Connect them to build the route,
+              Add regular, kindling, water bucket, and shop tiles. Connect them to build the route,
               then save the board locally and carry it into team setup.
             </p>
           </div>
 
           <div className="hero-stats">
             <article>
-              <strong>3</strong>
+              <strong>4</strong>
               <span>Tile types</span>
             </article>
             <article>
@@ -694,6 +826,10 @@ function App() {
               <button type="button" className="secondary-button" onClick={() => addTile('water')}>
                 <ShieldAlert size={16} />
                 Add water bucket
+              </button>
+              <button type="button" className="secondary-button" onClick={() => addTile('shop')}>
+                <ShoppingBag size={16} />
+                Add shop
               </button>
             </div>
           </article>
@@ -800,6 +936,7 @@ function App() {
                           <option value="regular">Regular</option>
                           <option value="kindling">Kindling</option>
                           <option value="water">Water Bucket</option>
+                          <option value="shop">Shop</option>
                         </select>
                       </label>
 
@@ -951,6 +1088,10 @@ function App() {
                   <span>Water bucket: -3 embers</span>
                 </article>
                 <article>
+                  <ShoppingBag size={18} />
+                  <span>Shop: buy one-use items with embers</span>
+                </article>
+                <article>
                   <GitBranch size={18} />
                   <span>Multiple connections create branch choices</span>
                 </article>
@@ -1074,7 +1215,9 @@ function App() {
               type="button"
               className="primary-button"
               onClick={() => {
-                setGame(createGameState(setupTeams, structuredClone(selectedBoardMap)))
+                const nextGame = createGameState(setupTeams, structuredClone(selectedBoardMap))
+                setGame(nextGame)
+                setGmTargetTeamId(nextGame.players[0]?.id ?? '')
                 setMode('game')
               }}
             >
@@ -1151,13 +1294,24 @@ function App() {
               )}
 
               {game.phase === 'postRoll' && (
-                <button
-                  type="button"
-                  className="primary-button"
-                  onClick={() => commitGame((draft) => continueMovement(draft))}
-                >
-                  Move {game.roll?.total} spaces
-                </button>
+                <div className="choice-group">
+                  <div className="choice-copy">
+                    <strong>Roll result</strong>
+                    <span>Use Double Logs before moving if you want.</span>
+                  </div>
+                  {getItemCount(currentPlayer, 'doubleLogs') > 0 && !game.roll?.wasDoubled && (
+                    <button type="button" className="secondary-button" onClick={useDoubleLogs}>
+                      Use Double Logs ({getItemCount(currentPlayer, 'doubleLogs')})
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="primary-button"
+                    onClick={() => commitGame((draft) => continueMovement(draft))}
+                  >
+                    Move {game.roll?.total} spaces
+                  </button>
+                </div>
               )}
 
               {game.phase === 'choosingPath' && game.branchChoice && (
@@ -1186,10 +1340,113 @@ function App() {
                 <div className="choice-group">
                   <div className="choice-copy">
                     <strong>Turn summary</strong>
-                    <span>Every {FLAME_TOKEN_EXCHANGE_RATE} embers becomes 1 Flame Token automatically.</span>
+                    <span>Use items or end turn. Every {FLAME_TOKEN_EXCHANGE_RATE} embers auto-converts to 1 Flame Token.</span>
                   </div>
-                  <button type="button" className="primary-button" onClick={endTurn}>
-                    End turn
+                  <div className="action-grid">
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={useLog}
+                      disabled={getItemCount(currentPlayer, 'logs') < 1}
+                    >
+                      Use Log ({getItemCount(currentPlayer, 'logs')})
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => beginTargeting('waterSpray')}
+                      disabled={getItemCount(currentPlayer, 'waterSpray') < 1}
+                    >
+                      Water Spray ({getItemCount(currentPlayer, 'waterSpray')})
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => beginTargeting('wildfire')}
+                      disabled={getItemCount(currentPlayer, 'wildfire') < 1}
+                    >
+                      Wildfire ({getItemCount(currentPlayer, 'wildfire')})
+                    </button>
+                    <button type="button" className="primary-button" onClick={endTurn}>
+                      End turn
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {game.phase === 'shop' && (
+                <div className="shop-panel">
+                  <div className="choice-copy">
+                    <strong>Shop</strong>
+                    <span>Spend embers to buy one-use items.</span>
+                  </div>
+
+                  <div className="shop-grid">
+                    {(Object.keys(ITEM_COSTS) as ItemKey[]).map((item) => (
+                      <button
+                        type="button"
+                        key={item}
+                        className="shop-item"
+                        onClick={() => buyItem(item)}
+                        disabled={currentPlayer.embers < ITEM_COSTS[item]}
+                      >
+                        <strong>{ITEM_LABELS[item]}</strong>
+                        <span>{ITEM_DESCRIPTIONS[item]}</span>
+                        <em>{ITEM_COSTS[item]} embers</em>
+                      </button>
+                    ))}
+                  </div>
+
+                  <button
+                    type="button"
+                    className="primary-button"
+                    onClick={() =>
+                      commitGame((draft) => {
+                        draft.phase = 'awaitingAction'
+                      })
+                    }
+                  >
+                    Leave shop
+                  </button>
+                </div>
+              )}
+
+              {game.phase === 'choosingTarget' && (
+                <div className="choice-group">
+                  <div className="choice-copy">
+                    <strong>Choose target</strong>
+                    <span>
+                      {game.targetingAction === 'waterSpray'
+                        ? 'Pick a team to reduce their next roll by 1.'
+                        : 'Pick a team to swap board positions with.'}
+                    </span>
+                  </div>
+
+                  {game.players
+                    .filter((player) => player.id !== currentPlayer.id)
+                    .map((player) => (
+                      <button
+                        type="button"
+                        key={player.id}
+                        className="target-button"
+                        onClick={() => applyTargetAction(player.id)}
+                      >
+                        <span className="player-dot" style={{ backgroundColor: player.color }} />
+                        {player.name}
+                      </button>
+                    ))}
+
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    onClick={() =>
+                      commitGame((draft) => {
+                        draft.targetingAction = null
+                        draft.phase = 'awaitingAction'
+                      })
+                    }
+                  >
+                    Cancel
                   </button>
                 </div>
               )}
@@ -1237,6 +1494,50 @@ function App() {
               {game.log.map((entry) => (
                 <p key={entry}>{entry}</p>
               ))}
+            </div>
+          </article>
+
+          <article className="status-card">
+            <div className="panel-heading compact">
+              <h2>Game Master</h2>
+              <p>Grant embers to any team at any time.</p>
+            </div>
+
+            <div className="editor-controls">
+              <label className="stack-field">
+                <span className="field-label">Team</span>
+                <select
+                  value={gmTargetTeamId}
+                  onChange={(event) => setGmTargetTeamId(event.target.value)}
+                >
+                  <option value="">Select a team</option>
+                  {game.players.map((player) => (
+                    <option key={player.id} value={player.id}>
+                      {player.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="stack-field">
+                <span className="field-label">Embers to add</span>
+                <input
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={gmEmberAmount}
+                  onChange={(event) => setGmEmberAmount(Number(event.target.value))}
+                />
+              </label>
+
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={applyManualEmbers}
+                disabled={!gmTargetTeamId || gmEmberAmount < 1}
+              >
+                Add embers
+              </button>
             </div>
           </article>
 

@@ -8,7 +8,7 @@ export type SpaceKind =
   | 'shop'
   | 'branch'
 
-export type EditableSpaceKind = 'regular' | 'kindling' | 'water'
+export type EditableSpaceKind = 'regular' | 'kindling' | 'water' | 'shop'
 
 export interface TeamSetup {
   id: string
@@ -115,6 +115,27 @@ export const DEFAULT_TEAMS: TeamSetup[] = [
   { id: 'ember-3', name: 'Spark Squad', color: '#22c55e' },
   { id: 'ember-4', name: 'Torch Team', color: '#ec4899' },
 ]
+
+export const ITEM_COSTS: Record<ItemKey, number> = {
+  logs: 3,
+  waterSpray: 3,
+  doubleLogs: 5,
+  wildfire: 7,
+}
+
+export const ITEM_LABELS: Record<ItemKey, string> = {
+  logs: 'Log',
+  waterSpray: 'Water Spray',
+  doubleLogs: 'Double Logs',
+  wildfire: 'Wildfire',
+}
+
+export const ITEM_DESCRIPTIONS: Record<ItemKey, string> = {
+  logs: 'Take an immediate extra 1d6 roll this turn.',
+  waterSpray: "Reduce another team's next roll by 1.",
+  doubleLogs: 'Double your current roll after you roll.',
+  wildfire: 'Swap positions with another team.',
+}
 
 export const DEFAULT_BOARD_MAP: BoardMap = {
   id: 'flame-trail-classic',
@@ -358,6 +379,11 @@ export const trimLog = (entries: string[], message: string) => [
 
 export const getTilePresentation = (kind: EditableSpaceKind) => {
   switch (kind) {
+    case 'shop':
+      return {
+        label: 'Shop',
+        description: 'Buy one-use items with embers.',
+      }
     case 'kindling':
       return {
         label: 'Kindling',

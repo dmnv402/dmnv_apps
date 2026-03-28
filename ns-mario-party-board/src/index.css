@@ -41,7 +41,8 @@ body {
 
 body,
 button,
-input {
+input,
+select {
   font-family: var(--sans);
 }
 
@@ -77,11 +78,13 @@ p {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
-input {
+input,
+select {
   width: 100%;
   min-height: 46px;
   padding: 0 14px;
@@ -92,7 +95,8 @@ input {
 }
 
 button:focus-visible,
-input:focus-visible {
+input:focus-visible,
+select:focus-visible {
   outline: 3px solid rgba(220, 89, 28, 0.32);
   outline-offset: 2px;
 }

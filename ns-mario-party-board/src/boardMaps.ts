@@ -48,8 +48,9 @@ export const createStarterCustomMap = (name = 'Custom board'): BoardMap => ({
   spaces: [
     createStartSpace(),
     createTile('tile-1', 'regular', 48, 50, ['tile-2']),
-    createTile('tile-2', 'kindling', 74, 34, ['tile-3']),
-    createTile('tile-3', 'water', 74, 68, [START_SPACE_ID]),
+    createTile('tile-2', 'kindling', 70, 30, ['tile-3']),
+    createTile('tile-3', 'shop', 78, 54, ['tile-4']),
+    createTile('tile-4', 'water', 66, 74, [START_SPACE_ID]),
   ],
 })
 
